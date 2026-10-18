@@ -7,8 +7,8 @@ fn main() -> io::Result<()> {
 
     let mut raw_input = String::new();
     io::stdin().read_line(&mut raw_input)?;
+    let trimmed = raw_input.trim().to_string();
 
-    println!("");
-    println!("{raw_input}: command not found");
+    println!("{trimmed}: command not found");
     Ok(())
 }
