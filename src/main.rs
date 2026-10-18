@@ -1,6 +1,8 @@
-use std::error::Error;
+use std::fs;
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::{env, error::Error};
 
 enum Builtin {
     Exit,
@@ -35,14 +37,25 @@ fn builtin_type(user_input: &UserInput) {
         return;
     };
 
-    match Builtin::from_str(first_arg) {
-        Some(_) => {
-            println!("{} is a shell builtin", first_arg);
-        }
-        None => {
-            println!("{}: not found", first_arg);
+    if let Some(_) = Builtin::from_str(first_arg) {
+        println!("{} is a shell builtin", first_arg);
+    } else {
+        if let Some(path) = env::var_os("PATH") {
+            for dir in env::split_paths(&path) {
+                let file_path = dir.join(&first_arg);
+                if file_path.is_file() {
+                    println!("{} is {}", first_arg, file_path.display());
+                    if let Ok(meta) = fs::metadata(&file_path) {
+                        if meta.permissions().mode() & 0o111 != 0 {
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
+
+    println!("{first_arg}: not found");
 }
 
 fn handle_builtins(user_input: &UserInput, done: &mut bool) -> bool {
