@@ -44,9 +44,9 @@ fn builtin_type(user_input: &UserInput) {
             for dir in env::split_paths(&path) {
                 let file_path = dir.join(&first_arg);
                 if file_path.is_file() {
-                    println!("{} is {}", first_arg, file_path.display());
                     if let Ok(meta) = fs::metadata(&file_path) {
                         if meta.permissions().mode() & 0o111 != 0 {
+                            println!("{} is {}", first_arg, file_path.display());
                             return;
                         }
                     }
