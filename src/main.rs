@@ -18,9 +18,9 @@ fn handle_builtins(user_input: &str, done: &mut bool) -> bool {
 fn main() -> io::Result<()> {
     let mut done = false;
 
-    print!("$ ");
-    io::stdout().flush()?;
     while !done {
+        print!("$ ");
+        io::stdout().flush()?;
         let mut raw_input = String::new();
 
         io::stdin().read_line(&mut raw_input)?;
@@ -29,9 +29,6 @@ fn main() -> io::Result<()> {
         if !handle_builtins(trimmed.as_str(), &mut done) {
             println!("{trimmed}: command not found");
         }
-
-        print!("$ ");
-        io::stdout().flush()?;
     }
     Ok(())
 }
