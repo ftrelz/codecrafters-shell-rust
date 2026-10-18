@@ -53,9 +53,8 @@ fn builtin_type(user_input: &UserInput) {
                 }
             }
         }
+        println!("{first_arg}: not found");
     }
-
-    println!("{first_arg}: not found");
 }
 
 fn handle_builtins(user_input: &UserInput, done: &mut bool) -> bool {
