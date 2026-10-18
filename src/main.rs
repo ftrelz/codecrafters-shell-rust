@@ -2,6 +2,7 @@ use std::fs;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::process::{Command, Stdio};
 use std::{env, error::Error};
 
 enum Builtin {
@@ -77,6 +78,8 @@ fn handle_builtins(user_input: &UserInput, done: &mut bool) -> bool {
     true
 }
 
+// fn handle_external_command(user_input: &UserInput) -> Result<Child, io::Error> {}
+
 struct UserInput {
     command: String,
     arguments: Vec<String>,
@@ -103,7 +106,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let user_input = parse_user_input(&raw_input);
         if !handle_builtins(&user_input, &mut done) {
-            println!("{}: command not found", user_input.command);
+            if let Err(_) = Command::new(&user_input.command)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .args(&user_input.arguments)
+                .status()
+            {
+                println!("{}: command not found", user_input.command);
+            }
         }
     }
     Ok(())
