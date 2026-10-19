@@ -1,10 +1,9 @@
-use std::ffi::OsString;
 use std::fs;
 use std::io::ErrorKind;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::{env, error::Error};
 
@@ -100,21 +99,23 @@ fn builtin_pwd() {
 }
 
 fn builtin_cd(user_input: &UserInput) {
-    if let Some(arg1) = user_input.arguments.get(0) {
-        if let Err(e) = env::set_current_dir(Path::new(arg1))
-            && e.kind() == ErrorKind::NotFound
-        {
-            println!(
-                "{}: {}: No such file or directory",
-                &user_input.command, arg1
-            );
-        }
-    } else {
-        let home_path = env::var_os("HOME").unwrap_or(OsString::from(""));
-        env::set_current_dir(Path::new(
-            &home_path.into_string().unwrap_or(String::from("")),
-        ))
-        .ok();
+    let target: PathBuf = match user_input.arguments.first().map(String::as_str) {
+        None | Some("~") => match env::var_os("HOME") {
+            Some(home) => PathBuf::from(home),
+            None => {
+                eprintln!("cd: HOME not set");
+                return;
+            }
+        },
+        Some(path) => PathBuf::from(path),
+    };
+
+    if let Err(e) = env::set_current_dir(&target) {
+        let err_string = match e.kind() {
+            ErrorKind::NotFound => "No such file or directory".to_string(),
+            _ => e.to_string(),
+        };
+        eprintln!("cd: {}: {err_string}", target.display());
     }
 }
 
