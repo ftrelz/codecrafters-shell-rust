@@ -1,7 +1,10 @@
+use std::ffi::OsString;
 use std::fs;
+use std::io::ErrorKind;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::{env, error::Error};
 
@@ -10,6 +13,7 @@ enum Builtin {
     Echo,
     Type,
     PWD,
+    CD,
     Noop,
 }
 
@@ -20,10 +24,37 @@ impl Builtin {
             "echo" => Some(Builtin::Echo),
             "type" => Some(Builtin::Type),
             "pwd" => Some(Builtin::PWD),
+            "cd" => Some(Builtin::CD),
             "" => Some(Builtin::Noop),
             _ => None,
         }
     }
+}
+
+fn handle_builtins(user_input: &UserInput, done: &mut bool) -> bool {
+    let Some(command) = Builtin::from_str(&user_input.command) else {
+        return false;
+    };
+
+    match command {
+        Builtin::Exit => {
+            builtin_exit(done);
+        }
+        Builtin::Echo => {
+            builtin_echo(user_input);
+        }
+        Builtin::Type => {
+            builtin_type(user_input);
+        }
+        Builtin::PWD => {
+            builtin_pwd();
+        }
+        Builtin::CD => {
+            builtin_cd(user_input);
+        }
+        Builtin::Noop => (),
+    }
+    true
 }
 
 fn builtin_exit(done: &mut bool) {
@@ -60,37 +91,32 @@ fn builtin_type(user_input: &UserInput) {
     }
 }
 
-fn builtin_pwd() -> io::Result<()> {
-    println!("{}", env::current_dir()?.display());
-    Ok(())
-}
-
-fn handle_builtins(user_input: &UserInput, done: &mut bool) -> bool {
-    let Some(command) = Builtin::from_str(&user_input.command) else {
-        return false;
-    };
-
-    match command {
-        Builtin::Exit => {
-            builtin_exit(done);
-        }
-        Builtin::Echo => {
-            builtin_echo(user_input);
-        }
-        Builtin::Type => {
-            builtin_type(user_input);
-        }
-        Builtin::PWD => {
-            // ignore an error here as the codecrafters tests don't seem to test this
-            // scenario
-            builtin_pwd().ok();
-        }
-        Builtin::Noop => (),
+fn builtin_pwd() {
+    // ignore an error here as the codecrafters tests don't seem to test this
+    // scenario
+    if let Ok(dir) = env::current_dir() {
+        println!("{}", dir.display());
     }
-    true
 }
 
-// fn handle_external_command(user_input: &UserInput) -> Result<Child, io::Error> {}
+fn builtin_cd(user_input: &UserInput) {
+    if let Some(arg1) = user_input.arguments.get(0) {
+        if let Err(e) = env::set_current_dir(Path::new(arg1))
+            && e.kind() == ErrorKind::NotFound
+        {
+            println!(
+                "{}: {}: No such file or directory",
+                &user_input.command, arg1
+            );
+        }
+    } else {
+        let home_path = env::var_os("HOME").unwrap_or(OsString::from(""));
+        env::set_current_dir(Path::new(
+            &home_path.into_string().unwrap_or(String::from("")),
+        ))
+        .ok();
+    }
+}
 
 struct UserInput {
     command: String,
