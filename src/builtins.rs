@@ -56,7 +56,7 @@ fn builtin_exit(done: &mut bool) {
 }
 
 fn builtin_echo(user_input: &UserInput) {
-    println!("{}", user_input.arguments.join(""));
+    println!("{}", user_input.arguments.join(" "));
 }
 
 fn builtin_type(user_input: &UserInput) {
