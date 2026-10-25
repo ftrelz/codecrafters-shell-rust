@@ -6,6 +6,7 @@ pub enum TokenKind {
     Nl,
     Cr,
     Apostrophe,
+    Quote,
     Word,
 }
 
@@ -17,6 +18,7 @@ impl TokenKind {
             b'\n' => TokenKind::Nl,
             b'\r' => TokenKind::Cr,
             b'\'' => TokenKind::Apostrophe,
+            b'"' => TokenKind::Quote,
             _ => TokenKind::Word,
         }
     }
@@ -35,7 +37,7 @@ pub struct Token {
     pub raw: String,
 }
 
-static DELIMS: [u8; 5] = *b" \t\n\r\'";
+static DELIMS: [u8; 6] = *b" \t\n\r\'\"";
 
 fn parse_token(input: &[u8], is_delim: impl Fn(&u8) -> bool) -> &[u8] {
     let mut token_len = 0;
@@ -75,7 +77,7 @@ pub fn tokenize(raw_input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use crate::tokenizer::{Token, TokenKind, tokenize};
-    use TokenKind::{Apostrophe, Cr, Nl, Space, Tab, Word};
+    use TokenKind::{Apostrophe, Cr, Nl, Quote, Space, Tab, Word};
 
     fn tok(kind: TokenKind, raw: &str) -> Token {
         Token {
@@ -407,15 +409,202 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "double quotes are not supported yet"]
     fn tokenizes_double_quoted_args() {
         let user_input = "echo \"a b\"";
         let expected = vec![
             tok(Word, "echo"),
             tok(Space, " "),
-            tok(Word, "\"a"),
+            tok(Quote, "\""),
+            tok(Word, "a"),
             tok(Space, " "),
-            tok(Word, "b\""),
+            tok(Word, "b"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_double_quoted_command() {
+        let user_input = "\"hello world\" x";
+        let expected = vec![
+            tok(Quote, "\""),
+            tok(Word, "hello"),
+            tok(Space, " "),
+            tok(Word, "world"),
+            tok(Quote, "\""),
+            tok(Space, " "),
+            tok(Word, "x"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_multiple_spaces_inside_double_quotes() {
+        let user_input = "echo \"a  b\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "a"),
+            tok(Space, " "),
+            tok(Space, " "),
+            tok(Word, "b"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_other_ws_chars_inside_double_quotes() {
+        let user_input = "echo \"a\tb\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "a"),
+            tok(Tab, "\t"),
+            tok(Word, "b"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input:?}");
+    }
+
+    #[test]
+    fn tokenizes_empty_double_quoted_arg() {
+        let user_input = "echo \"\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_consecutive_double_quoted_args() {
+        let user_input = "echo \"a\" \"b\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "a"),
+            tok(Quote, "\""),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "b"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_adjacent_double_quoted() {
+        let user_input = "echo \"hello\"\"world\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "hello"),
+            tok(Quote, "\""),
+            tok(Quote, "\""),
+            tok(Word, "world"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_adjacent_double_quoted_and_plain_text() {
+        let user_input = "echo hello\"world\"!";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "hello"),
+            tok(Quote, "\""),
+            tok(Word, "world"),
+            tok(Quote, "\""),
+            tok(Word, "!"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_double_quoted_arg_between_plain_args() {
+        let user_input = "echo a \"b c\" d";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "a"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "b"),
+            tok(Space, " "),
+            tok(Word, "c"),
+            tok(Quote, "\""),
+            tok(Space, " "),
+            tok(Word, "d"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_apostrophe_inside_double_quotes() {
+        let user_input = "echo \"it's\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "it"),
+            tok(Apostrophe, "'"),
+            tok(Word, "s"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_double_quote_inside_single_quotes() {
+        let user_input = "echo 'say \"hi\"'";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Apostrophe, "'"),
+            tok(Word, "say"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "hi"),
+            tok(Quote, "\""),
+            tok(Apostrophe, "'"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_unterminated_double_quote_as_rest_of_input() {
+        let user_input = "echo \"abc def";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "abc"),
+            tok(Space, " "),
+            tok(Word, "def"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_non_ascii_double_quoted_args() {
+        let user_input = "echo \"wörld 日本\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "wörld"),
+            tok(Space, " "),
+            tok(Word, "日本"),
+            tok(Quote, "\""),
         ];
         assert_eq!(tokenize(user_input), expected, "{user_input}");
     }

@@ -34,15 +34,14 @@ fn combine_tokens_into_word(tokens: &[Token]) -> Token {
     }
 }
 
-fn parse_quoted(tokens: &mut Peekable<IntoIter<Token>>) -> Token {
+fn parse_quoted(tokens: &mut Peekable<IntoIter<Token>>, quote_type: &TokenKind) -> Token {
     let mut final_tokens: Vec<Token> = vec![];
     while let Some(token) = tokens.next() {
-        if token.kind == TokenKind::Apostrophe {
-            if tokens
-                .peek()
-                .is_some_and(|t| t.kind != TokenKind::Apostrophe)
-            {
+        if token.kind == *quote_type {
+            if tokens.peek().is_some_and(|t| &t.kind != quote_type) {
                 break;
+            } else {
+                tokens.next();
             }
         } else {
             final_tokens.push(token.clone());
@@ -54,23 +53,32 @@ fn parse_quoted(tokens: &mut Peekable<IntoIter<Token>>) -> Token {
 fn parse_input(input: &str) -> UserInput {
     let mut tokens = tokenize(input).into_iter().peekable();
     skip_whitespace(&mut tokens);
-    let command = tokens.next().unwrap_or_default();
+
+    let command = match tokens.next() {
+        Some(tok) => match tok.kind {
+            TokenKind::Quote | TokenKind::Apostrophe => parse_quoted(&mut tokens, &tok.kind),
+            TokenKind::Word => tok,
+            // we just skipped all the whitespace
+            TokenKind::Space | TokenKind::Tab | TokenKind::Nl | TokenKind::Cr => unreachable!(),
+        },
+        None => Token::default(),
+    };
     skip_whitespace(&mut tokens);
 
     let mut intermediate_tokens: Vec<Token> = vec![];
-    // parse all quoted args
+    // first parsing pass, handles all double and single quoted args
     while let Some(token) = tokens.next() {
-        if token.kind == TokenKind::Apostrophe {
-            intermediate_tokens.push(parse_quoted(&mut tokens));
-        } else {
-            intermediate_tokens.push(token.clone());
+        match token.kind {
+            TokenKind::Apostrophe | TokenKind::Quote => {
+                intermediate_tokens.push(parse_quoted(&mut tokens, &token.kind))
+            }
+            _ => intermediate_tokens.push(token.clone()),
         }
     }
 
-    // at this point all apostrophes should be removed and we only
-    // have words and whitespace
-    // any two tokens without whitespace between them need to
-    // be combined into a single token
+    // second parsing pass
+    // at this point all apostrophes should be removed and we only have words and whitespace
+    // any two tokens without whitespace between them need to be combined into a single token
     let mut final_tokens: Vec<Token> = vec![];
     let splitted = intermediate_tokens.split(|t| t.kind.is_whitespace());
     for slice in splitted {
@@ -265,6 +273,185 @@ mod tests {
                 parse_input("echo 'hello''world'"),
                 user_input("echo", &["helloworld"])
             );
+        }
+
+        mod double_quotes {
+            use super::*;
+
+            #[test]
+            fn parses_double_quoted_arg() {
+                assert_eq!(
+                    parse_input("echo \"hello world\""),
+                    user_input("echo", &["hello world"])
+                );
+            }
+
+            #[test]
+            fn preserves_consecutive_spaces() {
+                assert_eq!(
+                    parse_input("echo \"hello    world\""),
+                    user_input("echo", &["hello    world"])
+                );
+            }
+
+            #[test]
+            fn preserves_tabs() {
+                assert_eq!(
+                    parse_input("echo \"hello\t\tworld\""),
+                    user_input("echo", &["hello\t\tworld"])
+                );
+            }
+
+            #[test]
+            fn preserves_mixed_spaces_and_tabs() {
+                assert_eq!(
+                    parse_input("echo \"a \t b\""),
+                    user_input("echo", &["a \t b"])
+                );
+            }
+
+            #[test]
+            fn preserves_leading_and_trailing_whitespace() {
+                assert_eq!(
+                    parse_input("echo \"  a  \""),
+                    user_input("echo", &["  a  "])
+                );
+            }
+
+            #[test]
+            fn parses_whitespace_only_quoted_arg() {
+                assert_eq!(parse_input("echo \"   \""), user_input("echo", &["   "]));
+            }
+
+            #[test]
+            fn collapses_whitespace_outside_quotes_only() {
+                assert_eq!(
+                    parse_input("echo   \"a   b\"    c"),
+                    user_input("echo", &["a   b", "c"])
+                );
+            }
+
+            #[test]
+            fn treats_single_quote_literally() {
+                assert_eq!(parse_input("echo \"it's\""), user_input("echo", &["it's"]));
+            }
+
+            #[test]
+            fn treats_multiple_single_quotes_literally() {
+                assert_eq!(
+                    parse_input("echo \"'a' 'b'\""),
+                    user_input("echo", &["'a' 'b'"])
+                );
+            }
+
+            #[test]
+            fn treats_newline_and_carriage_return_literally() {
+                assert_eq!(
+                    parse_input("echo \"a\nb\rc\""),
+                    user_input("echo", &["a\nb\rc"])
+                );
+            }
+
+            #[test]
+            fn treats_shell_special_characters_literally() {
+                assert_eq!(
+                    parse_input("echo \"a|b;c&d>e<f*g?h#i\""),
+                    user_input("echo", &["a|b;c&d>e<f*g?h#i"])
+                );
+            }
+
+            #[test]
+            fn parses_empty_double_quotes_as_empty_arg() {
+                assert_eq!(parse_input("echo \"\""), user_input("echo", &[""]));
+            }
+
+            #[test]
+            fn parses_double_quoted_arg_between_plain_args() {
+                assert_eq!(
+                    parse_input("echo a \"b c\" d"),
+                    user_input("echo", &["a", "b c", "d"])
+                );
+            }
+
+            #[test]
+            fn parses_multiple_double_quoted_args() {
+                assert_eq!(
+                    parse_input("echo \"a b\" \"c d\""),
+                    user_input("echo", &["a b", "c d"])
+                );
+            }
+
+            #[test]
+            fn joins_adjacent_double_quoted_strings() {
+                assert_eq!(
+                    parse_input("echo \"hello\"\"world\""),
+                    user_input("echo", &["helloworld"])
+                );
+            }
+
+            #[test]
+            fn joins_adjacent_double_quoted_strings_preserving_whitespace() {
+                assert_eq!(
+                    parse_input("echo \"a  b\"\"c  d\""),
+                    user_input("echo", &["a  bc  d"])
+                );
+            }
+
+            #[test]
+            fn joins_double_quoted_with_following_plain_text() {
+                assert_eq!(
+                    parse_input("echo \"hello\"world"),
+                    user_input("echo", &["helloworld"])
+                );
+            }
+
+            #[test]
+            fn joins_double_quoted_with_preceding_plain_text() {
+                assert_eq!(
+                    parse_input("echo hello\"world\""),
+                    user_input("echo", &["helloworld"])
+                );
+            }
+
+            #[test]
+            fn joins_double_quoted_surrounded_by_plain_text() {
+                assert_eq!(
+                    parse_input("echo a\"b c\"d"),
+                    user_input("echo", &["ab cd"])
+                );
+            }
+
+            #[test]
+            fn joins_double_quoted_with_single_quoted() {
+                assert_eq!(
+                    parse_input("echo \"a b\"'c d'"),
+                    user_input("echo", &["a bc d"])
+                );
+            }
+
+            #[test]
+            fn treats_double_quote_inside_single_quotes_literally() {
+                assert_eq!(
+                    parse_input("echo 'say \"hi\"'"),
+                    user_input("echo", &["say \"hi\""])
+                );
+            }
+
+            #[test]
+            fn parses_double_quoted_command() {
+                assert_eq!(
+                    parse_input("\"my cmd\" arg"),
+                    user_input("my cmd", &["arg"])
+                );
+            }
+
+            #[test]
+            fn applies_double_quote_parsing_to_non_echo_commands() {
+                assert_eq!(
+                    parse_input("cat \"my  file.txt\""),
+                    user_input("cat", &["my  file.txt"])
+                );
+            }
         }
 
         #[test]
