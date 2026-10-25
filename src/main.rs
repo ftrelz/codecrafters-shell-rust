@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::io::{self, Write};
 use std::iter::Peekable;
 use std::process::{Command, Stdio};
-use std::slice::Iter;
+use std::vec::IntoIter;
 
 use crate::builtins::handle_builtins;
 use crate::tokenizer::{Token, TokenKind, tokenize};
@@ -15,6 +15,12 @@ use crate::tokenizer::{Token, TokenKind, tokenize};
 struct UserInput {
     command: String,
     arguments: Vec<String>,
+}
+
+fn skip_whitespace(tokens: &mut Peekable<IntoIter<Token>>) {
+    while tokens.peek().is_some_and(|t| t.kind.is_whitespace()) {
+        tokens.next();
+    }
 }
 
 fn combine_tokens_into_word(tokens: &[Token]) -> Token {
@@ -28,7 +34,7 @@ fn combine_tokens_into_word(tokens: &[Token]) -> Token {
     }
 }
 
-fn parse_quoted(tokens: &mut Peekable<Iter<Token>>) -> Token {
+fn parse_quoted(tokens: &mut Peekable<IntoIter<Token>>) -> Token {
     let mut final_tokens: Vec<Token> = vec![];
     while let Some(token) = tokens.next() {
         if token.kind == TokenKind::Apostrophe {
@@ -45,19 +51,17 @@ fn parse_quoted(tokens: &mut Peekable<Iter<Token>>) -> Token {
     combine_tokens_into_word(&final_tokens)
 }
 
-fn parse_echo_args(tokens: &Vec<Token>) -> UserInput {
-    // ignore leading whitespace
-    let start = tokens
-        .iter()
-        .position(|t| !t.kind.is_whitespace())
-        .unwrap_or(tokens.len());
-    let mut rest = tokens[start..].iter().peekable();
-    let mut intermediate_tokens: Vec<Token> = vec![];
+fn parse_input(input: &str) -> UserInput {
+    let mut tokens = tokenize(input).into_iter().peekable();
+    skip_whitespace(&mut tokens);
+    let command = tokens.next().unwrap_or_default();
+    skip_whitespace(&mut tokens);
 
+    let mut intermediate_tokens: Vec<Token> = vec![];
     // parse all quoted args
-    while let Some(token) = rest.next() {
+    while let Some(token) = tokens.next() {
         if token.kind == TokenKind::Apostrophe {
-            intermediate_tokens.push(parse_quoted(&mut rest));
+            intermediate_tokens.push(parse_quoted(&mut tokens));
         } else {
             intermediate_tokens.push(token.clone());
         }
@@ -78,26 +82,8 @@ fn parse_echo_args(tokens: &Vec<Token>) -> UserInput {
     }
 
     UserInput {
-        command: "echo".to_string(),
+        command: command.raw,
         arguments: final_tokens.into_iter().map(|t| t.raw).collect(),
-    }
-}
-
-fn parse_input(input: &str) -> UserInput {
-    let mut tokens = tokenize(input).into_iter().peekable();
-    while tokens.peek().is_some_and(|t| t.kind.is_whitespace()) {
-        tokens.next();
-    }
-    let command = tokens.next().unwrap_or_default();
-    match command.raw.as_str() {
-        "echo" => parse_echo_args(&tokens.collect()),
-        _ => UserInput {
-            command: command.raw,
-            arguments: tokens
-                .filter(|t| !t.kind.is_whitespace())
-                .map(|t| t.raw)
-                .collect(),
-        },
     }
 }
 
@@ -189,78 +175,6 @@ mod tests {
         }
     }
 
-    mod parse_echo_args {
-        use super::*;
-
-        fn parse(args: &str) -> UserInput {
-            parse_echo_args(&tokenize(args))
-        }
-
-        #[test]
-        fn command_is_always_echo() {
-            assert_eq!(parse("hello").command, "echo");
-        }
-
-        #[test]
-        fn parses_no_args() {
-            assert_eq!(parse(""), user_input("echo", &[]));
-        }
-
-        #[test]
-        fn parses_whitespace_only_args() {
-            assert_eq!(parse("   "), user_input("echo", &[]));
-        }
-
-        #[test]
-        fn parses_single_arg() {
-            assert_eq!(parse(" hello"), user_input("echo", &["hello"]));
-        }
-
-        #[test]
-        fn parses_multiple_args() {
-            assert_eq!(
-                parse(" hello world"),
-                user_input("echo", &["hello", "world"])
-            );
-        }
-
-        #[test]
-        fn collapses_repeated_spaces_between_args() {
-            assert_eq!(parse("  a    b"), user_input("echo", &["a", "b"]));
-        }
-
-        #[test]
-        fn keeps_whitespace_inside_quotes() {
-            assert_eq!(
-                parse(" 'hello  world'"),
-                user_input("echo", &["hello  world"])
-            );
-        }
-
-        #[test]
-        fn parses_quoted_arg_after_plain_arg() {
-            assert_eq!(parse(" a 'b c'"), user_input("echo", &["a", "b c"]));
-        }
-
-        #[test]
-        fn parses_plain_arg_after_quoted_arg() {
-            assert_eq!(parse(" 'a b' c"), user_input("echo", &["a b", "c"]));
-        }
-
-        #[test]
-        fn joins_adjacent_quoted_and_plain_text() {
-            assert_eq!(parse(" hello'world'"), user_input("echo", &["helloworld"]));
-        }
-
-        #[test]
-        fn joins_adjacent_quoted_strings() {
-            assert_eq!(
-                parse(" 'hello''world'"),
-                user_input("echo", &["helloworld"])
-            );
-        }
-    }
-
     mod parse_input {
         use super::*;
 
@@ -270,8 +184,18 @@ mod tests {
         }
 
         #[test]
+        fn parses_whitespace_only_input() {
+            assert_eq!(parse_input("   "), user_input("", &[]));
+        }
+
+        #[test]
         fn parses_command_without_args() {
             assert_eq!(parse_input("ls"), user_input("ls", &[]));
+        }
+
+        #[test]
+        fn parses_command_with_trailing_whitespace_only() {
+            assert_eq!(parse_input("ls   "), user_input("ls", &[]));
         }
 
         #[test]
@@ -296,20 +220,7 @@ mod tests {
         }
 
         #[test]
-        fn parses_echo_without_args() {
-            assert_eq!(parse_input("echo"), user_input("echo", &[]));
-        }
-
-        #[test]
-        fn parses_echo_with_args() {
-            assert_eq!(
-                parse_input("echo hello world"),
-                user_input("echo", &["hello", "world"])
-            );
-        }
-
-        #[test]
-        fn parses_echo_with_quoted_arg() {
+        fn keeps_whitespace_inside_quotes() {
             assert_eq!(
                 parse_input("echo 'hello  world'"),
                 user_input("echo", &["hello  world"])
@@ -317,10 +228,50 @@ mod tests {
         }
 
         #[test]
-        fn parses_echo_with_mixed_quoted_and_plain_args() {
+        fn parses_quoted_arg_after_plain_arg() {
+            assert_eq!(
+                parse_input("echo a 'b c'"),
+                user_input("echo", &["a", "b c"])
+            );
+        }
+
+        #[test]
+        fn parses_plain_arg_after_quoted_arg() {
+            assert_eq!(
+                parse_input("echo 'a b' c"),
+                user_input("echo", &["a b", "c"])
+            );
+        }
+
+        #[test]
+        fn parses_mixed_quoted_and_plain_args() {
             assert_eq!(
                 parse_input("echo a 'b c' d"),
                 user_input("echo", &["a", "b c", "d"])
+            );
+        }
+
+        #[test]
+        fn joins_adjacent_quoted_and_plain_text() {
+            assert_eq!(
+                parse_input("echo hello'world'"),
+                user_input("echo", &["helloworld"])
+            );
+        }
+
+        #[test]
+        fn joins_adjacent_quoted_strings() {
+            assert_eq!(
+                parse_input("echo 'hello''world'"),
+                user_input("echo", &["helloworld"])
+            );
+        }
+
+        #[test]
+        fn applies_quote_parsing_to_non_echo_commands() {
+            assert_eq!(
+                parse_input("cat 'my file.txt'"),
+                user_input("cat", &["my file.txt"])
             );
         }
     }
