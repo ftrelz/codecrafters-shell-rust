@@ -1,13 +1,14 @@
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
 pub enum TokenKind {
     #[default]
+    Word,
     Space,
     Tab,
     Nl,
     Cr,
     Apostrophe,
     Quote,
-    Word,
+    Backslash,
 }
 
 impl TokenKind {
@@ -19,6 +20,7 @@ impl TokenKind {
             b'\r' => TokenKind::Cr,
             b'\'' => TokenKind::Apostrophe,
             b'"' => TokenKind::Quote,
+            b'\\' => TokenKind::Backslash,
             _ => TokenKind::Word,
         }
     }
@@ -37,7 +39,7 @@ pub struct Token {
     pub raw: String,
 }
 
-static DELIMS: [u8; 6] = *b" \t\n\r\'\"";
+static DELIMS: [u8; 7] = *b" \t\n\r\'\"\\";
 
 fn parse_token(input: &[u8], is_delim: impl Fn(&u8) -> bool) -> &[u8] {
     let mut token_len = 0;
@@ -77,7 +79,7 @@ pub fn tokenize(raw_input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use crate::tokenizer::{Token, TokenKind, tokenize};
-    use TokenKind::{Apostrophe, Cr, Nl, Quote, Space, Tab, Word};
+    use TokenKind::{Apostrophe, Backslash, Cr, Nl, Quote, Space, Tab, Word};
 
     fn tok(kind: TokenKind, raw: &str) -> Token {
         Token {
@@ -605,6 +607,207 @@ mod tests {
             tok(Space, " "),
             tok(Word, "日本"),
             tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_lone_backslash() {
+        let user_input = "\\";
+        let expected = vec![tok(Backslash, "\\")];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_backslash_as_its_own_token() {
+        let user_input = "echo a\\b";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Word, "b"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_space() {
+        let user_input = "echo hello\\ world";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "hello"),
+            tok(Backslash, "\\"),
+            tok(Space, " "),
+            tok(Word, "world"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_space_in_command() {
+        let user_input = "my\\ cmd arg";
+        let expected = vec![
+            tok(Word, "my"),
+            tok(Backslash, "\\"),
+            tok(Space, " "),
+            tok(Word, "cmd"),
+            tok(Space, " "),
+            tok(Word, "arg"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_leading_backslash() {
+        let user_input = "\\echo hello";
+        let expected = vec![
+            tok(Backslash, "\\"),
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "hello"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_trailing_backslash() {
+        let user_input = "echo a\\";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_consecutive_backslashes() {
+        let user_input = "echo \\\\";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Backslash, "\\"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_tab() {
+        let user_input = "a\\\tb";
+        let expected = vec![
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Tab, "\t"),
+            tok(Word, "b"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input:?}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_single_quote() {
+        let user_input = "echo it\\'s";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Word, "it"),
+            tok(Backslash, "\\"),
+            tok(Apostrophe, "'"),
+            tok(Word, "s"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_double_quote() {
+        let user_input = "echo \\\"a\\\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Quote, "\""),
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_regular_letters() {
+        let user_input = "a\\nb\\tc";
+        let expected = vec![
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Word, "nb"),
+            tok(Backslash, "\\"),
+            tok(Word, "tc"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_escaped_special_characters_as_words() {
+        let user_input = "echo \\$HOME \\* \\?";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Word, "$HOME"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Word, "*"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Word, "?"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_backslash_inside_double_quotes() {
+        let user_input = "echo \"a\\nb\"";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Quote, "\""),
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Word, "nb"),
+            tok(Quote, "\""),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_backslash_inside_single_quotes() {
+        let user_input = "echo 'a\\ b'";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Apostrophe, "'"),
+            tok(Word, "a"),
+            tok(Backslash, "\\"),
+            tok(Space, " "),
+            tok(Word, "b"),
+            tok(Apostrophe, "'"),
+        ];
+        assert_eq!(tokenize(user_input), expected, "{user_input}");
+    }
+
+    #[test]
+    fn tokenizes_non_ascii_after_backslash() {
+        let user_input = "echo \\ö\\日";
+        let expected = vec![
+            tok(Word, "echo"),
+            tok(Space, " "),
+            tok(Backslash, "\\"),
+            tok(Word, "ö"),
+            tok(Backslash, "\\"),
+            tok(Word, "日"),
         ];
         assert_eq!(tokenize(user_input), expected, "{user_input}");
     }
