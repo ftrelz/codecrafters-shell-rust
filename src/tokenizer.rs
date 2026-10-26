@@ -9,6 +9,8 @@ pub enum TokenKind {
     Apostrophe,
     Quote,
     Backslash,
+    Dollar,
+    Backtick,
 }
 
 impl TokenKind {
@@ -21,6 +23,8 @@ impl TokenKind {
             b'\'' => TokenKind::Apostrophe,
             b'"' => TokenKind::Quote,
             b'\\' => TokenKind::Backslash,
+            b'$' => TokenKind::Dollar,
+            b'`' => TokenKind::Backtick,
             _ => TokenKind::Word,
         }
     }
@@ -39,7 +43,7 @@ pub struct Token {
     pub raw: String,
 }
 
-static DELIMS: [u8; 7] = *b" \t\n\r\'\"\\";
+static DELIMS: [u8; 9] = *b" \t\n\r'\"\\$`";
 
 fn parse_token(input: &[u8], is_delim: impl Fn(&u8) -> bool) -> &[u8] {
     let mut token_len = 0;
@@ -79,7 +83,7 @@ pub fn tokenize(raw_input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use crate::tokenizer::{Token, TokenKind, tokenize};
-    use TokenKind::{Apostrophe, Backslash, Cr, Nl, Quote, Space, Tab, Word};
+    use TokenKind::{Apostrophe, Backslash, Cr, Dollar, Nl, Quote, Space, Tab, Word};
 
     fn tok(kind: TokenKind, raw: &str) -> Token {
         Token {
@@ -750,19 +754,14 @@ mod tests {
     }
 
     #[test]
-    fn tokenizes_escaped_special_characters_as_words() {
-        let user_input = "echo \\$HOME \\* \\?";
+    fn tokenizes_escaped_dollar() {
+        let user_input = "echo \\$HOME";
         let expected = vec![
             tok(Word, "echo"),
             tok(Space, " "),
             tok(Backslash, "\\"),
-            tok(Word, "$HOME"),
-            tok(Space, " "),
-            tok(Backslash, "\\"),
-            tok(Word, "*"),
-            tok(Space, " "),
-            tok(Backslash, "\\"),
-            tok(Word, "?"),
+            tok(Dollar, "$"),
+            tok(Word, "HOME"),
         ];
         assert_eq!(tokenize(user_input), expected, "{user_input}");
     }

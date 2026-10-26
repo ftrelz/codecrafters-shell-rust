@@ -22,17 +22,28 @@ fn combine_tokens_into_word(tokens: &[Token]) -> Token {
     }
 }
 
+// static DBL_QUOTE_SPECIAL: [u8; 5] = *b"\"\\$`\n";
+static DBL_QUOTE_SPECIAL: [TokenKind; 5] = [
+    TokenKind::Quote,
+    TokenKind::Backslash,
+    TokenKind::Dollar,
+    TokenKind::Backtick,
+    TokenKind::Nl,
+];
 fn parse_quoted(tokens: &mut Peekable<IntoIter<Token>>, quote_type: &TokenKind) -> Token {
     let mut final_tokens: Vec<Token> = vec![];
     while let Some(token) = tokens.next() {
         if token.kind == *quote_type {
-            if tokens.peek().is_some_and(|t| &t.kind != quote_type) {
-                break;
-            } else {
-                tokens.next();
-            }
+            break;
+        } else if *quote_type == TokenKind::Quote
+            && token.kind == TokenKind::Backslash
+            && tokens
+                .peek()
+                .is_some_and(|t| DBL_QUOTE_SPECIAL.contains(&t.kind))
+        {
+            final_tokens.push(tokens.next().unwrap());
         } else {
-            final_tokens.push(token.clone());
+            final_tokens.push(token);
         }
     }
     combine_tokens_into_word(&final_tokens)
@@ -43,9 +54,9 @@ fn parse_term(tokens: &mut Peekable<IntoIter<Token>>) -> Option<Token> {
     while let Some(tok) = tokens.next() {
         let new_tok = match tok.kind {
             TokenKind::Quote | TokenKind::Apostrophe => Some(parse_quoted(tokens, &tok.kind)),
-            TokenKind::Word => Some(tok),
             TokenKind::Backslash => tokens.next(),
             TokenKind::Space | TokenKind::Tab | TokenKind::Nl | TokenKind::Cr => break,
+            _ => Some(tok),
         };
         if new_tok.is_some() {
             parsed_tokens.push(new_tok.unwrap());
@@ -68,7 +79,7 @@ pub fn parse_input(input: &str) -> UserInput {
 
     let mut final_tokens: Vec<Token> = vec![];
     while let Some(token) = parse_term(&mut tokens) {
-        final_tokens.push(token.clone());
+        final_tokens.push(token);
         skip_whitespace(&mut tokens);
     }
 
@@ -615,6 +626,303 @@ mod tests {
                 assert_eq!(
                     parse_input("echo 'hello\\ world\\n'"),
                     user_input("echo", &["hello\\ world\\n"])
+                );
+            }
+        }
+
+        mod backslash_in_single_quotes {
+            use super::*;
+
+            #[test]
+            fn backslash_before_letter_is_literal() {
+                assert_eq!(parse_input("echo 'a\\nb'"), user_input("echo", &["a\\nb"]));
+            }
+
+            #[test]
+            fn double_backslash_stays_double() {
+                assert_eq!(
+                    parse_input("echo 'a\\\\b'"),
+                    user_input("echo", &["a\\\\b"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_double_quote_is_literal() {
+                assert_eq!(
+                    parse_input("echo 'a\\\"b'"),
+                    user_input("echo", &["a\\\"b"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_dollar_is_literal() {
+                assert_eq!(
+                    parse_input("echo '\\$HOME'"),
+                    user_input("echo", &["\\$HOME"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_space_is_literal() {
+                assert_eq!(parse_input("echo 'a\\ b'"), user_input("echo", &["a\\ b"]));
+            }
+
+            #[test]
+            fn lone_backslash_is_an_arg() {
+                assert_eq!(parse_input("echo '\\'"), user_input("echo", &["\\"]));
+            }
+
+            #[test]
+            fn backslash_does_not_escape_closing_quote() {
+                assert_eq!(
+                    parse_input("echo 'a\\' b"),
+                    user_input("echo", &["a\\", "b"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_closing_quote_joins_with_following_text() {
+                assert_eq!(parse_input("echo 'a\\'b"), user_input("echo", &["a\\b"]));
+            }
+
+            #[test]
+            fn backslash_is_literal_in_single_quoted_command() {
+                assert_eq!(
+                    parse_input("'my\\ cmd' arg"),
+                    user_input("my\\ cmd", &["arg"])
+                );
+            }
+
+            #[test]
+            fn backslash_joins_with_adjacent_unquoted_escape() {
+                assert_eq!(
+                    parse_input("echo 'a\\n'\\ b"),
+                    user_input("echo", &["a\\n b"])
+                );
+            }
+        }
+
+        mod backslash_in_double_quotes {
+            use super::*;
+
+            // escapes recognised inside double quotes: \" \\ \$ \`
+
+            #[test]
+            fn escaped_double_quote_is_literal() {
+                assert_eq!(
+                    parse_input("echo \"a\\\"b\""),
+                    user_input("echo", &["a\"b"])
+                );
+            }
+
+            #[test]
+            fn escaped_double_quote_does_not_end_the_quote() {
+                assert_eq!(
+                    parse_input("echo \"a\\\" b\""),
+                    user_input("echo", &["a\" b"])
+                );
+            }
+
+            #[test]
+            fn escaped_backslash_is_a_single_backslash() {
+                assert_eq!(
+                    parse_input("echo \"a\\\\b\""),
+                    user_input("echo", &["a\\b"])
+                );
+            }
+
+            #[test]
+            fn escaped_backslash_before_closing_quote_ends_the_quote() {
+                assert_eq!(
+                    parse_input("echo \"a\\\\\" b"),
+                    user_input("echo", &["a\\", "b"])
+                );
+            }
+
+            #[test]
+            fn escaped_backslash_then_escaped_quote() {
+                assert_eq!(
+                    parse_input("echo \"\\\\\\\"\""),
+                    user_input("echo", &["\\\""])
+                );
+            }
+
+            #[test]
+            fn escaped_dollar_is_literal() {
+                assert_eq!(
+                    parse_input("echo \"\\$HOME\""),
+                    user_input("echo", &["$HOME"])
+                );
+            }
+
+            #[test]
+            fn escaped_backtick_is_literal() {
+                assert_eq!(parse_input("echo \"a\\`b\""), user_input("echo", &["a`b"]));
+            }
+
+            #[test]
+            fn escaped_newline_is_removed() {
+                assert_eq!(parse_input("echo \"a\\\nb\""), user_input("echo", &["ab"]));
+            }
+
+            #[test]
+            fn escaped_newline_at_start_and_end_is_removed() {
+                assert_eq!(
+                    parse_input("echo \"\\\na\\\n\""),
+                    user_input("echo", &["a"])
+                );
+            }
+
+            #[test]
+            fn escaped_newline_alone_gives_empty_arg() {
+                assert_eq!(parse_input("echo \"\\\n\""), user_input("echo", &[""]));
+            }
+
+            #[test]
+            fn escaped_newline_keeps_surrounding_whitespace() {
+                assert_eq!(
+                    parse_input("echo \"a \\\n b\""),
+                    user_input("echo", &["a  b"])
+                );
+            }
+
+            #[test]
+            fn multiple_escaped_newlines_are_removed() {
+                assert_eq!(
+                    parse_input("echo \"a\\\n\\\nb\""),
+                    user_input("echo", &["ab"])
+                );
+            }
+
+            #[test]
+            fn unescaped_newline_is_kept_next_to_escaped_newline() {
+                assert_eq!(
+                    parse_input("echo \"a\\\n\nb\""),
+                    user_input("echo", &["a\nb"])
+                );
+            }
+
+            #[test]
+            fn escaped_backslash_before_newline_keeps_newline() {
+                assert_eq!(
+                    parse_input("echo \"a\\\\\nb\""),
+                    user_input("echo", &["a\\\nb"])
+                );
+            }
+
+            #[test]
+            fn escaped_newline_joins_with_adjacent_text() {
+                assert_eq!(
+                    parse_input("echo pre\"a\\\nb\"post"),
+                    user_input("echo", &["preabpost"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_carriage_return_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"a\\\rb\""),
+                    user_input("echo", &["a\\\rb"])
+                );
+            }
+
+            // all other backslashes are kept literally
+
+            #[test]
+            fn backslash_before_letter_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"a\\nb\""),
+                    user_input("echo", &["a\\nb"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_space_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"a\\ b\""),
+                    user_input("echo", &["a\\ b"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_single_quote_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"it\\'s\""),
+                    user_input("echo", &["it\\'s"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_non_ascii_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"\\ö\\日\""),
+                    user_input("echo", &["\\ö\\日"])
+                );
+            }
+
+            #[test]
+            fn backslash_before_glob_and_operators_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"\\*\\?\\|\\;\""),
+                    user_input("echo", &["\\*\\?\\|\\;"])
+                );
+            }
+
+            // interaction with surrounding text
+
+            #[test]
+            fn escaped_quote_joins_with_adjacent_plain_text() {
+                assert_eq!(
+                    parse_input("echo pre\"a\\\"b\"post"),
+                    user_input("echo", &["prea\"bpost"])
+                );
+            }
+
+            #[test]
+            fn escaped_quote_joins_with_adjacent_quoted_text() {
+                assert_eq!(
+                    parse_input("echo \"a\\\"\"b\" c\""),
+                    user_input("echo", &["a\"b c"])
+                );
+            }
+
+            #[test]
+            fn escaped_quote_between_args() {
+                assert_eq!(
+                    parse_input("echo \"x\\\"y\" \"z\""),
+                    user_input("echo", &["x\"y", "z"])
+                );
+            }
+
+            #[test]
+            fn single_quoted_backslash_inside_double_quotes_is_kept() {
+                assert_eq!(
+                    parse_input("echo \"'a\\\\b'\""),
+                    user_input("echo", &["'a\\b'"])
+                );
+            }
+
+            #[test]
+            fn double_quotes_around_single_quoted_backslash_are_literal() {
+                assert_eq!(
+                    parse_input("echo '\"a\\\"b\"'"),
+                    user_input("echo", &["\"a\\\"b\""])
+                );
+            }
+
+            #[test]
+            fn escapes_in_double_quoted_command() {
+                assert_eq!(
+                    parse_input("\"my\\\"cmd\" arg"),
+                    user_input("my\"cmd", &["arg"])
+                );
+            }
+
+            #[test]
+            fn applies_escaping_to_non_echo_commands() {
+                assert_eq!(
+                    parse_input("cat \"my \\\"file\\\".txt\""),
+                    user_input("cat", &["my \"file\".txt"])
                 );
             }
         }
